@@ -8,7 +8,7 @@ import glob
 from rcon import Client
 
 from valveexe.utils import find_process, terminate_process
-from valveexe.logger import Logger
+from valveexe.logfile import LogFile
 from valveexe.console import RconConsole, ExecConsole
 
 
@@ -84,7 +84,7 @@ class ValveExe(object):
         while not os.path.exists(self.logPath):
             time.sleep(3)
 
-        self.logger = Logger(self.logPath)
+        self.logfile = LogFile(self.logPath)
 
     def run(self, command, *params):
         '''Forwards a command with its parameters to the active :any:`VConsole`
@@ -153,7 +153,7 @@ class ValveExe(object):
             self.run('con_logfile', '""')
         except:
             pass
-        del self.logger
+        del self.logfile
 
     def _full_cleanup(self):
         for f in glob.glob(self.gameDir + 'valve-exe-*.log'):
