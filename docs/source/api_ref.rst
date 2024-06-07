@@ -8,4 +8,4 @@ If you are looking for information on a specific function, class or method, this
 
    api/valveexe
    api/console
-   api/logger
+   api/logfile
