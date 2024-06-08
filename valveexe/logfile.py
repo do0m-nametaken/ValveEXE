@@ -1,3 +1,5 @@
+from collections.abc import Iterable
+from inspect import getdoc
 from re import search as regexsearch
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
@@ -5,7 +7,8 @@ from os.path import dirname, abspath, isfile
 
 class LogFile:
     '''
-    Initialize a console logfile to track.
+    Initialize a console logfile to track by leveraging the con_logfile
+    command. Supported in most source games (except L4D2).
     '''
     def __init__(self, file_path):
         '''
@@ -34,150 +37,232 @@ class LogFile:
                 self._bookmark = file.tell()
         return logs_since_bookmark
 
-class LogWatch(FileSystemEventHandler):
+class LogWatcher():
     '''
-    An abstract class that you can override methods from that can
-    automatically detect changes in a :any:`LogFile()` and can then call
-    aforementioned methods.
-
-    When :any:`started<start()>` on its own with the default arguments, it
-    watches the LogFile and executes the respective method according to the
-    type of event (e.g. created, moved, etc.) And because those methods are,
-    *by default*, set to be "successful events" (i.e. return a value of True),
-    it then :any:`stops<stop()>`.
+    An abstract class that can automatically detect changes in a
+    :any:`LogFile<LogFile()>` and can then call the appropriate event methods
+    that you can override from.
     '''
 
-    def __init__(self, logfile, iters=1, daemonic=True, join=False):
+    def __init__(self, logfile, iters=1, daemon=True, join=False):
         '''
-        :param logfile: The LogFile to watch
+        :param logfile: The :any:`LogFile<LogFile()>` to watch
         :type logfile: LogFile
 
         :param iters: Specifies how many consecutive "successful events" until
             stopping. This means that those methods need to return True to get
-            a "successful event" in order to automatically stop the LogWatch
+            a successful event in order to automatically :any:`stop()`.
         :type iters: positive, int
 
-        :param daemonic: Determines whether to use a `daemonic thread
-            <https://docs.python.org/3/library/threading.html#:~:text=a%20threa
-            d%20can%20be%20flagged%20as%20a%20%E2%80%9Cdaemon%20thread%E2%80%9D
-            .%20the%20significance%20of%20this%20flag%20is%20that%20the%20entir
-            e%20python%20program%20exits%20when%20only%20daemon%20threads%20are
-            %20left.>`_
-            . Set to False if you don't want to let the main program exit
-            without letting the LogWatch stop first.
-        :type daemonic: bool
+        :param daemon: Determines whether to use a `daemonic thread
+            <https://docs.python.org/3/librar   y/threading.html#:~:text=a%20th
+            read%20can%20be%20flagged%20as%20a%20%E2%80%9Cdaemon%20thread%E2%80
+            %9D.%20the%20significance%20of%20this%20flag%20is%20that%20the%20en
+            tire%20python%20program%20exits%20when%20only%20daemon%20threads%20
+            are%20left.>`_.
+            Set to False if you don't want to let the main program exit
+            without letting the :any:`LogWatcher` stop first.
+        :type daemon: bool
 
         :param join: Determines whether to call :meth:`~threading.Thread.join`
-            when starting. Set to True if you want block further execution
-            until the LogWatch has stopped.
+            when starting. Set to True if you want to block/pause further
+            execution once starting until the :any:`LogWatcher` has stopped.
         :type join: bool
         '''
         self.logfile = logfile
         self.iters = iters
-        self.daemonic = daemonic
+        self.daemon = daemon
         self.join = join
         self._started = False
+        self._event_handler = FileSystemEventHandler()
+        self._event_handler.on_any_event = self.on_any_event
+
+    def start(self):
+        '''
+        Start watching the :any:`LogFile<LogFile()>`.
+        '''
+        self._successful_events = 0
+        self._observer = Observer()
+        self._observer.daemon = self.daemon
+        self._observer.schedule(
+            self._event_handler,
+            dirname(self.logfile.file_path),
+            recursive=False)
+        self._observer.start()
+        self._started = True
+        if self.join: self._observer.join()
+
+    def stop(self):
+        '''
+        Stop watching the :any:`LogFile<LogFile()>`.
+        '''
+        if self._started:
+            self._observer.stop()
+            del self._observer
+            del self._successful_events
+            self._started = False
+        else:
+            # already stopped
+            pass
 
     def on_any_event(self, event):
+        """Catch-all event handler. After calling the appropriate event method,
+        it will call :any:`stop()` if the amount of successful events
+        internally counted reaches the :attr:`iters` parameter.
+
+        :param event:
+            The event object representing the file system event.
+        :type event:
+            :class:`FileSystemEvent`
+        """
         if (
                 not event.is_directory and
                 abspath(event.src_path) == abspath(self.logfile.file_path)
             ):
             match event.event_type:
                 case 'modified':
-                    if self.on_modified(event.src_path): self._iters -= 1
+                    if self.on_modified(event.src_path):
+                        self._successful_events += 1
                 case 'created':
-                    if self.on_created(event.src_path): self._iters -= 1
+                    if self.on_created(event.src_path):
+                        self._successful_events += 1
                 case 'deleted':
-                    if self.on_deleted(event.src_path): self._iters -= 1
+                    if self.on_deleted(event.src_path):
+                        self._successful_events += 1
                 case 'closed':
-                    if self.on_closed(event.src_path): self._iters -= 1
+                    if self.on_closed(event.src_path):
+                        self._successful_events += 1
                 case 'moved':
-                    if self.on_moved(event.src_path): self._iters -= 1
-            if self._iters == 0: self.stop()
-            else: pass
+                    if self.on_moved(event.src_path):
+                        self._successful_events += 1
+            if self._successful_events >= self.iters:
+                self.stop()
+            else:
+                pass
 
-    def on_modified(self, event):
+    def on_moved(self, event):
+        """
+        Called by :any:`on_any_event()` when the logfile is moved or renamed.
+
+        :param event:
+            Event representing file/directory movement.
+        :type event:
+            :class:`DirMovedEvent` or :class:`FileMovedEvent`
+
+        :return: Whether or not the call was a successful event.
+            :any:`True` by default.
+        :rtype: bool
+        """
         return True
 
     def on_created(self, event):
+        """
+        Called by :any:`on_any_event()` when the logfile is created.
+
+        :param event:
+            Event representing file/directory creation.
+        :type event:
+            :class:`DirCreatedEvent` or :class:`FileCreatedEvent`
+        
+        :return: Whether or not the call was a successful event.
+            :any:`True` by default.
+        :rtype: bool
+        """
         return True
 
     def on_deleted(self, event):
+        """
+        Called by :any:`on_any_event()` when the logfile is deleted.
+
+        :param event:
+            Event representing file/directory deletion.
+        :type event:
+            :class:`DirDeletedEvent` or :class:`FileDeletedEvent`
+        
+        :return: Whether or not the call was a successful event.
+            :any:`True` by default.
+        :rtype: bool
+        """
+        return True
+
+    def on_modified(self, event):
+        """
+        Called by :any:`on_any_event()` when the logfile is modified.
+
+        :param event:
+            Event representing file/directory modification.
+        :type event:
+            :class:`DirModifiedEvent` or :class:`FileModifiedEvent`
+        
+        :return: Whether or not the call was a successful event.
+            :any:`True` by default.
+        :rtype: bool
+        """
         return True
 
     def on_closed(self, event):
-        return True
+        """
+        Called by :any:`on_any_event()` when the logfile opened for writing
+        is closed.
 
-    def on_moved(self, event):
-        return True
-
-    def start(self):
-        '''
-        Start watching the LogFile.
-        '''
-        self._iters = self.iters
-        self._observer = Observer()
-        self._observer.daemon = self.daemonic
-        self._observer.schedule(
-            self,
-            dirname(self.logfile.file_path),
-            recursive=False)
-        self._observer.start()
-        self._started = True
-
-    def stop(self):
-        '''
-        Stop watching the LogFile.
-        '''
-        if self._started:
-            self._observer.stop()
-            del self._observer
-            del self._iters
-            self._started = False
-        else:
-            # already stopped
-            pass
+        :param event:
+            Event representing file closing.
+        :type event:
+            :class:`FileClosedEvent`
+        
+        :return: Whether or not the call was a successful event.
+            :any:`True` by default.
+        :rtype: bool
+        """
 
 
-class RegexLogWatch(LogWatch):
+class RegexLogWatcher(LogWatcher):
     '''
-    Log Watcher that will :any:`ingest()` whenever the LogFile is modified and
-    will execute the specified callback if a specified regex is found within
-    the logfile.
+    Log Watcher that will :any:`ingest()` whenever the
+    :any:`LogFile<LogFile()>` is modified and will execute the specified
+    callback if a specified regex is found within the
+    :any:`LogFile<LogFile()>`'s recent/:any:`ingested<ingest()>` output.
 
-    This class inherits the parameters, methods, and, default arguments from
-    :any:`LogWatch`.
+    This class inherits the parameters and default arguments from
+    :any:`LogWatcher`.
     '''
 
     def __init__(
             self, logfile, regex, callback,
-            iters=1, daemonic=True, join=False,
-            *callback_args, **callback_kwargs
+            args=[], kwargs=dict(), iters=1, daemon=True, join=False
         ):
         '''
         :param regex: A regex string to match against the logs
         :type regex: str
 
-        :param callback: The function to run on a successful regex match
-        :type callback: function
+        :param callback: The function to call on a successful regex match
+        :type callback: ~collections.abc.Callable
 
-        :param \*callback_args: The arguments to pass to the callback function
+        :param args: The arguments to pass to the callback function in the form
+            of an iterable
+        :type args: ~collections.abc.Iterable
 
-        :param \*\*callback_kwargs: The keyword arguments to pass to the
-            callback function
+        :param kwargs: The keyword arguments to pass to the callback function
+            in the form of a mapping/dictionary
+        :type kwargs: dict
         '''
-        super().__init__(logfile, iters, daemonic, join)
+        super().__init__(logfile, iters, daemon, join)
         self.regex = regex
         self.callback = callback
-        self.callback_args = callback_args
-        self.callback_kwargs = callback_kwargs
+        if not isinstance(args, Iterable):
+            raise TypeError("args must be an iterable.")
+        else: self.args = args
+        if not isinstance(kwargs, dict):
+            raise TypeError("kwargs must be a mapping.")
+        else: self.kwargs = kwargs
 
     def on_modified(self, event):
+        print("logmod")
         if (
                 regexsearch(self.regex, self.logfile.ingest()) and
                 self.callback is not None and callable(self.callback)
             ):
-            return self.callback(*self.callback_args, **self.callback_kwargs)
+            print("callback")
+            return self.callback(*self.args, **self.kwargs)
         else:
-            pass
+            return False

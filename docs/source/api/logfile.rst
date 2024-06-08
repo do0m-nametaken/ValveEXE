@@ -5,11 +5,11 @@ LogFile
    :members:
    :special-members: __init__
 
-.. autoclass:: valveexe.LogWatch
+.. autoclass:: valveexe.LogWatcher
    :members:
    :special-members: __init__
 
-.. autoclass:: valveexe.RegexLogWatch
+.. autoclass:: valveexe.RegexLogWatcher
    :members:
    :special-members: __init__
    :show-inheritance:

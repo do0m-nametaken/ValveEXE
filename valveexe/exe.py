@@ -42,8 +42,9 @@ class ValveExe(object):
 
         self.uuid = str(uuid.uuid4()).split('-')[-1]
 
-        self.logName = 'valve-exe-' + self.uuid + '.log'
+        self.logName = f'valve-exe-{self.uuid}.log'
         self.logPath = os.path.join(gameDir, self.logName)
+        self.logFile = LogFile(self.logPath) #: :type: (LogFile) - the logfile that the game is writing to
 
         self.console = None
 
@@ -51,6 +52,7 @@ class ValveExe(object):
         self.hijacked = None
 
         self._full_cleanup()
+
 
     def launch(self, *params):
         '''Launches the game as specified in :any:`__init__` with the
@@ -75,7 +77,7 @@ class ValveExe(object):
             launch_params.extend(['-usercon', '+ip', '0.0.0.0',
                                   '+rcon_password', self.uuid])
 
-        launch_params.extend(list(*params))
+        launch_params.extend([*params])
         self.process = subprocess.Popen(
             launch_params,
             creationflags=subprocess.DETACHED_PROCESS |
@@ -83,8 +85,6 @@ class ValveExe(object):
 
         while not os.path.exists(self.logPath):
             time.sleep(3)
-
-        self.logfile = LogFile(self.logPath)
 
     def run(self, command, *params):
         '''Forwards a command with its parameters to the active :any:`VConsole`
@@ -153,7 +153,6 @@ class ValveExe(object):
             self.run('con_logfile', '""')
         except:
             pass
-        del self.logfile
 
     def _full_cleanup(self):
         for f in glob.glob(self.gameDir + 'valve-exe-*.log'):
