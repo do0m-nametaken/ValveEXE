@@ -3,18 +3,24 @@ from re import search as regexsearch
 from watchdog.observers.polling import PollingObserver
 from watchdog.events import FileSystemEventHandler
 from os.path import dirname, abspath, isfile
+from os import remove as removefile
 
 class LogFile:
     """
     Initialize a console logfile to track by leveraging the con_logfile
     command. Supported in most source games (except L4D2).
     """
-    def __init__(self, file_path):
+    def __init__(self, file_path, cleanup=False):
         """
         :param file_path: The path to the log file
         :type file_path: path, str
+
+        :param cleanup: Whether or not to delete the actual logfile when the
+            instance is destroyed
+        :type cleanup: bool
         """
         self.file_path = file_path
+        self.cleanup = cleanup
         self.logs = ""  #: :type: (str) - all the logs accumulated so far
         self._bookmark = 0
         if isfile(abspath(self.file_path)):
@@ -35,6 +41,11 @@ class LogFile:
                 logs_since_bookmark += line
                 self._bookmark = file.tell()
         return logs_since_bookmark
+
+    def __del__(self):
+        if self.cleanup:
+            print("DEBUG: deleting logfile")
+            removefile(self.file_path)
 
 class LogWatcher:
     """

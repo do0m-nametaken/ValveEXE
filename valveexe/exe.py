@@ -44,7 +44,7 @@ class ValveExe(object):
 
         self.logName = f'valve-exe-{self.uuid}.log'
         self.logPath = os.path.join(gameDir, self.logName)
-        self.logFile = LogFile(self.logPath) #: :type: (LogFile) - the logfile that the game is writing to
+        self.logFile = LogFile(self.logPath, True) #: :type: (LogFile) - the logfile that the game is writing to
 
         self.console = None
 
@@ -105,6 +105,7 @@ class ValveExe(object):
 
     def quit(self):
         '''Closes the game client'''
+        self.run("con_logfile", '""') # stop writing to the logfile in order for the LogFile object to delete it.
         process = self.process or find_process(self.exeName)
         if process:
             process.terminate()
