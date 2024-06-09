@@ -1,7 +1,6 @@
 from collections.abc import Iterable
-from inspect import getdoc
 from re import search as regexsearch
-from watchdog.observers import Observer
+from watchdog.observers.polling import PollingObserver
 from watchdog.events import FileSystemEventHandler
 from os.path import dirname, abspath, isfile
 
@@ -14,7 +13,7 @@ class LogFile:
         '''
         :param file_path: The path to the log file
         :type file_path: path, str
-         '''
+        '''
         self.file_path = file_path
         self.logs = ""  #: :type: (str) - all the logs accumulated so far
         self._bookmark = 0
@@ -37,42 +36,57 @@ class LogFile:
                 self._bookmark = file.tell()
         return logs_since_bookmark
 
-class LogWatcher():
+class LogWatcher:
     '''
     An abstract class that can automatically detect changes in a
     :any:`LogFile<LogFile()>` and can then call the appropriate event methods
     that you can override from.
-    '''
 
-    def __init__(self, logfile, iters=1, daemon=True, join=False):
+    When used as a context manager, it :any:`starts<start()>`, runs the with
+    block, then :meth:`joins()` and :any:`stops<stop()>` .
+    '''
+    def __init__(
+            self, logfile,
+            polling_interval=0.5, iters=1, daemon=True, join=False):
         '''
         :param logfile: The :any:`LogFile<LogFile()>` to watch
         :type logfile: LogFile
 
+        :param polling_interval: interval in seconds between polling the
+            logfile.
+        :type polling_interval: float
+
         :param iters: Specifies how many consecutive "successful events" until
-            stopping. This means that those methods need to return True to get
-            a successful event in order to automatically :any:`stop()`.
+            :any:`stopping<stop()>`. This means that those methods need to
+            return :any:`True` to get a successful event in order to
+            automatically :any:`stop()`.
         :type iters: positive, int
 
-        :param daemon: Determines whether to use a `daemonic thread
-            <https://docs.python.org/3/librar   y/threading.html#:~:text=a%20th
-            read%20can%20be%20flagged%20as%20a%20%E2%80%9Cdaemon%20thread%E2%80
-            %9D.%20the%20significance%20of%20this%20flag%20is%20that%20the%20en
-            tire%20python%20program%20exits%20when%20only%20daemon%20threads%20
-            are%20left.>`_.
-            Set to False if you don't want to let the main program exit
+        :param daemon: Determines whether to use a `daemon thread
+            <https://docs.python.org/3/library/threading.html#threading.Thread.
+            daemon>`_.
+            Set to :any:`False` if you don't want to let the main program exit
             without letting the :any:`LogWatcher` stop first.
         :type daemon: bool
 
-        :param join: Determines whether to call :meth:`~threading.Thread.join`
-            when starting. Set to True if you want to block/pause further
-            execution once starting until the :any:`LogWatcher` has stopped.
+        :param join: Determines whether to call `join()
+            <https://docs.python.org/3/library/threading.html#threading.Thread.
+            join>`_
+            when starting. Set to :any:`True` if you want to block/pause
+            further execution once starting until the :any:`LogWatcher` has
+            stopped. This will be overridden if the :any:`LogWatcher` is used
+            as a context manager as it will always `join()
+            <https://docs.python.org/3/library/threading.html#threading.Thread.
+            join>`_
+            but only after executing the with block.
         :type join: bool
         '''
         self.logfile = logfile
+        self.polling_interval = polling_interval
         self.iters = iters
         self.daemon = daemon
         self.join = join
+        self._in_context_manager = False
         self._started = False
         self._event_handler = FileSystemEventHandler()
         self._event_handler.on_any_event = self.on_any_event
@@ -81,16 +95,27 @@ class LogWatcher():
         '''
         Start watching the :any:`LogFile<LogFile()>`.
         '''
-        self._successful_events = 0
-        self._observer = Observer()
-        self._observer.daemon = self.daemon
-        self._observer.schedule(
-            self._event_handler,
-            dirname(self.logfile.file_path),
-            recursive=False)
-        self._observer.start()
-        self._started = True
-        if self.join: self._observer.join()
+        if not self._started:
+            # for some reason, WindowsApiObserver
+            # does not work on logfiles, at least for me
+            # so DON'T TAKE MY WORD FOR IT
+            # because of that, we're using a PollingObserver instead
+            # TODO: check if other observers can work on other platforms
+            self._observer = PollingObserver(self.polling_interval)
+            self._observer.daemon = self.daemon
+
+            self._successful_events = 0 # counter
+            self._observer.schedule(
+                self._event_handler,
+                dirname(self.logfile.file_path),
+                recursive=False)
+            self._observer.start()
+            self._started = True
+            if self.join and not self._in_context_manager:
+                self._observer.join()
+        else:
+            # already started
+            pass
 
     def stop(self):
         '''
@@ -137,12 +162,10 @@ class LogWatcher():
                         self._successful_events += 1
             if self._successful_events >= self.iters:
                 self.stop()
-            else:
-                pass
 
     def on_moved(self, event):
         """
-        Called by :any:`on_any_event()` when the logfile is moved or renamed.
+        Called by :meth:`on_any_event()` when the logfile is moved or renamed.
 
         :param event:
             Event representing file/directory movement.
@@ -157,7 +180,7 @@ class LogWatcher():
 
     def on_created(self, event):
         """
-        Called by :any:`on_any_event()` when the logfile is created.
+        Called by :meth:`on_any_event()` when the logfile is created.
 
         :param event:
             Event representing file/directory creation.
@@ -172,7 +195,7 @@ class LogWatcher():
 
     def on_deleted(self, event):
         """
-        Called by :any:`on_any_event()` when the logfile is deleted.
+        Called by :meth:`on_any_event()` when the logfile is deleted.
 
         :param event:
             Event representing file/directory deletion.
@@ -187,7 +210,7 @@ class LogWatcher():
 
     def on_modified(self, event):
         """
-        Called by :any:`on_any_event()` when the logfile is modified.
+        Called by :meth:`on_any_event()` when the logfile is modified.
 
         :param event:
             Event representing file/directory modification.
@@ -202,7 +225,7 @@ class LogWatcher():
 
     def on_closed(self, event):
         """
-        Called by :any:`on_any_event()` when the logfile opened for writing
+        Called by :meth:`on_any_event()` when the logfile opened for writing
         is closed.
 
         :param event:
@@ -215,6 +238,20 @@ class LogWatcher():
         :rtype: bool
         """
 
+    def __enter__(self):
+        self._in_context_manager = True
+        self.start()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self._observer.join()
+        self.stop()
+        self._in_context_manager = False
+        return False
+
+    def __del__(self):
+        if self._started:
+            self.stop()
 
 class RegexLogWatcher(LogWatcher):
     '''
@@ -226,43 +263,41 @@ class RegexLogWatcher(LogWatcher):
     This class inherits the parameters and default arguments from
     :any:`LogWatcher`.
     '''
-
     def __init__(
-            self, logfile, regex, callback,
-            args=[], kwargs=dict(), iters=1, daemon=True, join=False
+            self, logfile, pattern, callback, args=[], kwargs=dict(),
+            polling_interval=0.5, iters=1, daemon=True, join=False
         ):
         '''
-        :param regex: A regex string to match against the logs
+        :param regex: A regex pattern string to match against the logs
         :type regex: str
 
         :param callback: The function to call on a successful regex match
         :type callback: ~collections.abc.Callable
 
         :param args: The arguments to pass to the callback function in the form
-            of an iterable
+            of an :class:`iterable<collections.abc.Iterable>`
         :type args: ~collections.abc.Iterable
 
         :param kwargs: The keyword arguments to pass to the callback function
-            in the form of a mapping/dictionary
+            in the form of a :class:`mapping/dictionary<dict>`
         :type kwargs: dict
         '''
-        super().__init__(logfile, iters, daemon, join)
-        self.regex = regex
+        super().__init__(logfile, polling_interval iters, daemon, join)
+        self.pattern = pattern
         self.callback = callback
         if not isinstance(args, Iterable):
             raise TypeError("args must be an iterable.")
-        else: self.args = args
+        else:
+            self.args = args
         if not isinstance(kwargs, dict):
             raise TypeError("kwargs must be a mapping.")
-        else: self.kwargs = kwargs
+        else:
+            self.kwargs = kwargs
 
     def on_modified(self, event):
-        print("logmod")
-        if (
-                regexsearch(self.regex, self.logfile.ingest()) and
-                self.callback is not None and callable(self.callback)
-            ):
-            print("callback")
+        ''':return: :any:`True` if regex match is found'''
+        matches = bool(regexsearch(self.pattern, self.logfile.ingest()))
+        if matches and callable(self.callback):
             return self.callback(*self.args, **self.kwargs)
         else:
             return False
