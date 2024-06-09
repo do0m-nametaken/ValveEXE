@@ -282,7 +282,7 @@ class RegexLogWatcher(LogWatcher):
             in the form of a :class:`mapping/dictionary<dict>`
         :type kwargs: dict
         '''
-        super().__init__(logfile, polling_interval iters, daemon, join)
+        super().__init__(logfile, polling_interval, iters, daemon, join)
         self.pattern = pattern
         self.callback = callback
         if not isinstance(args, Iterable):
@@ -301,3 +301,10 @@ class RegexLogWatcher(LogWatcher):
             return self.callback(*self.args, **self.kwargs)
         else:
             return False
+
+    def on_created(self, event):
+        '''
+        :return: **self.on_modified(event)** so that it still checks for a
+            regex match if the logfile had just been created
+        '''
+        return self.on_modified(event)
