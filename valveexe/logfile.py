@@ -5,15 +5,15 @@ from watchdog.events import FileSystemEventHandler
 from os.path import dirname, abspath, isfile
 
 class LogFile:
-    '''
+    """
     Initialize a console logfile to track by leveraging the con_logfile
     command. Supported in most source games (except L4D2).
-    '''
+    """
     def __init__(self, file_path):
-        '''
+        """
         :param file_path: The path to the log file
         :type file_path: path, str
-        '''
+        """
         self.file_path = file_path
         self.logs = ""  #: :type: (str) - all the logs accumulated so far
         self._bookmark = 0
@@ -21,12 +21,12 @@ class LogFile:
             self.ingest()
 
     def ingest(self):
-        '''
+        """
         Will resume reading the logs from where it last left off until the end
         and return all logs since.
 
         :rtype: str
-        '''
+        """
         logs_since_bookmark = ""
         with open(self.file_path, mode="r") as file:
             file.seek(self._bookmark, 0)
@@ -37,18 +37,18 @@ class LogFile:
         return logs_since_bookmark
 
 class LogWatcher:
-    '''
+    """
     An abstract class that can automatically detect changes in a
     :any:`LogFile<LogFile()>` and can then call the appropriate event methods
     that you can override from.
 
     When used as a context manager, it :any:`starts<start()>`, runs the with
     block, then :meth:`joins()` and :any:`stops<stop()>` .
-    '''
+    """
     def __init__(
             self, logfile,
             polling_interval=0.5, iters=1, daemon=True, join=False):
-        '''
+        """
         :param logfile: The :any:`LogFile<LogFile()>` to watch
         :type logfile: LogFile
 
@@ -57,9 +57,8 @@ class LogWatcher:
         :type polling_interval: float
 
         :param iters: Specifies how many consecutive "successful events" until
-            :any:`stopping<stop()>`. This means that those methods need to
-            return :any:`True` to get a successful event in order to
-            automatically :any:`stop()`.
+            :any:`stopping<stop()>`. The event methods should return True for a
+            successful event in order to automatically :any:`stop()`.
         :type iters: positive, int
 
         :param daemon: Determines whether to use a `daemon thread
@@ -80,7 +79,7 @@ class LogWatcher:
             join>`_
             but only after executing the with block.
         :type join: bool
-        '''
+        """
         self.logfile = logfile
         self.polling_interval = polling_interval
         self.iters = iters
@@ -92,9 +91,9 @@ class LogWatcher:
         self._event_handler.on_any_event = self.on_any_event
 
     def start(self):
-        '''
+        """
         Start watching the :any:`LogFile<LogFile()>`.
-        '''
+        """
         if not self._started:
             # for some reason, WindowsApiObserver
             # does not work on logfiles, at least for me
@@ -118,9 +117,9 @@ class LogWatcher:
             pass
 
     def stop(self):
-        '''
+        """
         Stop watching the :any:`LogFile<LogFile()>`.
-        '''
+        """
         if self._started:
             self._observer.stop()
             del self._observer
@@ -131,9 +130,10 @@ class LogWatcher:
             pass
 
     def on_any_event(self, event):
-        """Catch-all event handler. After calling the appropriate event method,
-        it will call :any:`stop()` if the amount of successful events
-        internally counted reaches the :attr:`iters` parameter.
+        """
+        Catch-all event handler. After calling the appropriate event method, it
+        will call :any:`stop()` if the amount of successful events internally
+        counted reaches the :attr:`iters` parameter.
 
         :param event:
             The event object representing the file system event.
@@ -142,8 +142,7 @@ class LogWatcher:
         """
         if (
                 not event.is_directory and
-                abspath(event.src_path) == abspath(self.logfile.file_path)
-            ):
+                abspath(event.src_path) == abspath(self.logfile.file_path)):
             match event.event_type:
                 case 'modified':
                     if self.on_modified(event.src_path):
@@ -237,6 +236,7 @@ class LogWatcher:
             :any:`True` by default.
         :rtype: bool
         """
+        return True
 
     def __enter__(self):
         self._in_context_manager = True
@@ -254,7 +254,7 @@ class LogWatcher:
             self.stop()
 
 class RegexLogWatcher(LogWatcher):
-    '''
+    """
     Log Watcher that will :any:`ingest()` whenever the
     :any:`LogFile<LogFile()>` is modified and will execute the specified
     callback if a specified regex is found within the
@@ -262,12 +262,11 @@ class RegexLogWatcher(LogWatcher):
 
     This class inherits the parameters and default arguments from
     :any:`LogWatcher`.
-    '''
+    """
     def __init__(
             self, logfile, pattern, callback, args=[], kwargs=dict(),
-            polling_interval=0.5, iters=1, daemon=True, join=False
-        ):
-        '''
+            polling_interval=0.5, iters=1, daemon=True, join=False):
+        """
         :param regex: A regex pattern string to match against the logs
         :type regex: str
 
@@ -281,7 +280,7 @@ class RegexLogWatcher(LogWatcher):
         :param kwargs: The keyword arguments to pass to the callback function
             in the form of a :class:`mapping/dictionary<dict>`
         :type kwargs: dict
-        '''
+        """
         super().__init__(logfile, polling_interval, iters, daemon, join)
         self.pattern = pattern
         self.callback = callback
@@ -295,7 +294,7 @@ class RegexLogWatcher(LogWatcher):
             self.kwargs = kwargs
 
     def on_modified(self, event):
-        ''':return: :any:`True` if regex match is found'''
+        """:return: :any:`True` if regex match is found"""
         matches = bool(regexsearch(self.pattern, self.logfile.ingest()))
         if matches and callable(self.callback):
             return self.callback(*self.args, **self.kwargs)
@@ -303,8 +302,8 @@ class RegexLogWatcher(LogWatcher):
             return False
 
     def on_created(self, event):
-        '''
+        """
         :return: **self.on_modified(event)** so that it still checks for a
             regex match if the logfile had just been created
-        '''
+        """
         return self.on_modified(event)
