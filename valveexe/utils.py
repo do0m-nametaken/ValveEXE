@@ -1,6 +1,7 @@
 import psutil
 
 def find_process(exeName):
+    # makes sure it returns the most recently created instance of the process
     most_recent_proc = None
     most_recent_time = -1
 
@@ -10,7 +11,10 @@ def find_process(exeName):
                 if proc.info['create_time'] > most_recent_time:
                     most_recent_proc = proc
                     most_recent_time = proc.info['create_time']
-        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+        except (
+                psutil.NoSuchProcess,
+                psutil.AccessDenied,
+                psutil.ZombieProcess):
             continue
     return most_recent_proc
 

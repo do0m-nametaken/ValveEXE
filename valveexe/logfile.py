@@ -5,11 +5,13 @@ from watchdog.events import FileSystemEventHandler
 from os.path import dirname, abspath, isfile
 from os import remove as removefile
 
+
 class LogFile:
     """
     Initialize a console logfile to track by leveraging the con_logfile
     command. Supported in most source games (except L4D2).
     """
+
     def __init__(self, file_path, cleanup=False):
         """
         :param file_path: The path to the log file
@@ -23,6 +25,7 @@ class LogFile:
         self.cleanup = cleanup
         self.logs = ""  #: :type: (str) - all the logs accumulated so far
         self._bookmark = 0
+        self._last_ingested = ""
         if isfile(abspath(self.file_path)):
             self.ingest()
 
@@ -34,18 +37,26 @@ class LogFile:
         :rtype: str
         """
         logs_since_bookmark = ""
-        with open(self.file_path, mode="r") as file:
+        with open(
+                # TODO:
+                # figure out which encoding the console uses for the logfile!
+                self.file_path, encoding="utf8", errors="replace", mode="r") \
+                as file:
             file.seek(self._bookmark, 0)
             for line in file.readlines():
                 self.logs += line
                 logs_since_bookmark += line
                 self._bookmark = file.tell()
+        self._last_ingested = logs_since_bookmark
         return logs_since_bookmark
 
     def __del__(self):
         if self.cleanup:
-            print("DEBUG: deleting logfile")
-            removefile(self.file_path)
+            try:
+                removefile(self.file_path)
+            except PermissionError:
+                pass
+
 
 class LogWatcher:
     """
@@ -56,9 +67,9 @@ class LogWatcher:
     When used as a context manager, it :any:`starts<start()>`, runs the with
     block, then :meth:`joins()` and :any:`stops<stop()>` .
     """
-    def __init__(
-            self, logfile,
-            polling_interval=0.5, iters=1, daemon=True, join=False):
+
+    def __init__(self,
+            logfile, polling_interval=0.5, iters=1, daemon=True, join=True):
         """
         :param logfile: The :any:`LogFile<LogFile()>` to watch
         :type logfile: LogFile
@@ -114,7 +125,7 @@ class LogWatcher:
             self._observer = PollingObserver(self.polling_interval)
             self._observer.daemon = self.daemon
 
-            self._successful_events = 0 # counter
+            self._successful_events = 0  # counter
             self._observer.schedule(
                 self._event_handler,
                 dirname(self.logfile.file_path),
@@ -196,7 +207,7 @@ class LogWatcher:
             Event representing file/directory creation.
         :type event:
             :class:`DirCreatedEvent` or :class:`FileCreatedEvent`
-        
+
         :return: Whether or not the call was a successful event.
             :any:`True` by default.
         :rtype: bool
@@ -211,7 +222,7 @@ class LogWatcher:
             Event representing file/directory deletion.
         :type event:
             :class:`DirDeletedEvent` or :class:`FileDeletedEvent`
-        
+
         :return: Whether or not the call was a successful event.
             :any:`True` by default.
         :rtype: bool
@@ -226,7 +237,7 @@ class LogWatcher:
             Event representing file/directory modification.
         :type event:
             :class:`DirModifiedEvent` or :class:`FileModifiedEvent`
-        
+
         :return: Whether or not the call was a successful event.
             :any:`True` by default.
         :rtype: bool
@@ -242,7 +253,7 @@ class LogWatcher:
             Event representing file closing.
         :type event:
             :class:`FileClosedEvent`
-        
+
         :return: Whether or not the call was a successful event.
             :any:`True` by default.
         :rtype: bool
@@ -255,14 +266,22 @@ class LogWatcher:
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
-        self._observer.join()
-        self.stop()
+        """
+        using a condition in case the logwatcher stopped inside the with block.
+        it can accidentally happen like when using run() on any console
+        inside the with block to run a command that will trigger the
+        logwatcher. (as seen in examples/count_to_godlike.py)
+        """
+        if self._started:
+            self._observer.join()
+            self.stop()
         self._in_context_manager = False
         return False
 
     def __del__(self):
         if self._started:
             self.stop()
+
 
 class RegexLogWatcher(LogWatcher):
     """
@@ -274,8 +293,10 @@ class RegexLogWatcher(LogWatcher):
     This class inherits the parameters and default arguments from
     :any:`LogWatcher`.
     """
-    def __init__(
-            self, logfile, pattern, callback, args=[], kwargs=dict(),
+
+    def __init__(self,
+            logfile, pattern, callback,
+            callback_pass_self=False, args=[], kwargs=dict(),
             polling_interval=0.5, iters=1, daemon=True, join=False):
         """
         :param regex: A regex pattern string to match against the logs
@@ -283,6 +304,10 @@ class RegexLogWatcher(LogWatcher):
 
         :param callback: The function to call on a successful regex match
         :type callback: ~collections.abc.Callable
+
+        :param callback_pass_self: Whether or not to pass **self** to the
+            callback. This gets passed first before the following parameters
+        :type callback_pass_self: bool
 
         :param args: The arguments to pass to the callback function in the form
             of an :class:`iterable<collections.abc.Iterable>`
@@ -295,6 +320,7 @@ class RegexLogWatcher(LogWatcher):
         super().__init__(logfile, polling_interval, iters, daemon, join)
         self.pattern = pattern
         self.callback = callback
+        self.callback_pass_self = callback_pass_self
         if not isinstance(args, Iterable):
             raise TypeError("args must be an iterable.")
         else:
@@ -306,9 +332,10 @@ class RegexLogWatcher(LogWatcher):
 
     def on_modified(self, event):
         """:return: :any:`True` if regex match is found"""
+        pass_self = [self] if self.callback_pass_self else []
         matches = bool(regexsearch(self.pattern, self.logfile.ingest()))
         if matches and callable(self.callback):
-            return self.callback(*self.args, **self.kwargs)
+            return self.callback(*pass_self, *self.args, **self.kwargs)
         else:
             return False
 

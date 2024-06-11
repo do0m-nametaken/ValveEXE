@@ -8,13 +8,17 @@ import glob
 from rcon import Client
 
 from valveexe.utils import find_process, terminate_process
-from valveexe.logfile import LogFile
+from valveexe.logfile import LogFile, RegexLogWatcher
 from valveexe.console import RconConsole, ExecConsole
 
+PATTERNS = {
+    "name_command": r'\"name\" = \"(?P<client_name>[^"]*)\"',
+    "player_kill": r"(?P<subject>.+) killed (?P<victim>.+) with (?P<weapon>\w+)"
+}
 
 class ValveExe(object):
     def __init__(self, gameExe, gameDir, steamExe=None, appid=None):
-        '''Defines a launchable source engine game to be interacted with.
+        """Defines a launchable source engine game to be interacted with.
 
         .. note:: Some games cannot be launched by their .exe alone \
         (ex:csgo, probably for anti-cheat related reasons). \
@@ -29,13 +33,14 @@ class ValveExe(object):
         :type gameDir: path, str
         :param steamExe: The path for the Steam executable.
         :type steamExe: optional, path, str
-        :param appid: The `Steam AppID <https://developer.valvesoftware.com/wiki/Steam_Application_IDs>`_.
+        :param appid: The `Steam AppID
+            <https://developer.valvesoftware.com/wiki/Steam_Application_IDs>`_.
         :type appid: optional, int
-        '''
+        """
 
         self.gameExe = gameExe
         self.gameDir = gameDir
-        self.exeName = self.gameExe.split('\\')[-1]
+        self.exeName = self.gameExe.split('\\')[-1]  #: :type: (str) - only the filename of `gameExe`
 
         self.appid = appid
         self.steamExe = steamExe
@@ -51,29 +56,38 @@ class ValveExe(object):
         self.rcon_enabled = None
         self.hijacked = None
 
+        # returns a process if game is already running, None if else
+        self.process = find_process(self.exeName)
+
         self._full_cleanup()
 
-
     def launch(self, *params):
-        '''Launches the game as specified in :any:`__init__` with the
+        """Launches the game as specified in :any:`__init__` with the
         launch parameters supplied as arguments.
 
         :param \*params: The launch parameters to be supplied to the executable.
         :type \*params: str
-        '''
+        """
+
+        # if the game is already running,
+        # just makes it sure that it writes to the logfile
+        if self.process:
+            self.run("con_logfile", self.logName)
+            return
+
         if self.steamExe and self.appid:
             # Steam launches cannot be hijacked
             terminate_process(self.exeName)
             launch_params = [self.steamExe, '-applaunch', str(self.appid)]
         else:
-            self.hijacked = bool(find_process(self.exeName))
+            self.hijacked = bool(self.process)
             launch_params = [self.gameExe, '-hijack']
 
         launch_params.extend(['-game', self.gameDir])
         launch_params.extend(['+log', '0', '+sv_logflush', '1',
                               '+con_logfile', self.logName])
 
-        if self._check_rcon_eligible() is not False:
+        if self._check_rcon_eligible():
             launch_params.extend(['-usercon', '+ip', '0.0.0.0',
                                   '+rcon_password', self.uuid])
 
@@ -87,14 +101,14 @@ class ValveExe(object):
             time.sleep(3)
 
     def run(self, command, *params):
-        '''Forwards a command with its parameters to the active :any:`VConsole`
+        """Forwards a command with its parameters to the active :any:`VConsole`
 
         :param command: A Source Engine `console command \
         <https://developer.valvesoftware.com/wiki/Console_Command_List>`_.
         :type command: str
         :param \*params: The values to be included with the command.
         :type \*params: str
-        '''
+        """
         if not self.process:
             return
         if self.console:
@@ -104,34 +118,33 @@ class ValveExe(object):
                 console.run(command, *params)
 
     def quit(self):
-        '''Closes the game client'''
-        self.run("con_logfile", '""') # stop writing to the logfile in order for the LogFile object to delete it.
+        """Closes the game client"""
+        self.run(
+            # stop writing to the logfile in order for the
+            # LogFile object to delete it upon its destruction.
+            "con_logfile", '""')
         process = self.process or find_process(self.exeName)
         if process:
             process.terminate()
         self.process = None
 
     def _check_rcon_eligible(self):
-        '''
+        """
         None: Unknown
         True: Eligible
         False: Not eligible
-        '''
-        process = find_process(self.exeName)
-        if not process:
+        """
+        if self.process is not None:
+            process = psutil.Process(self.process.pid)
+            if '-usercon' not in process.cmdline():
+                # doesn't have rcon enabled
+                return False
+            else:
+                # 'connections' confirms game is listening for rcon
+                return bool(process.connections())
+        else:
             # no process running
             return None
-        elif self.gameDir not in process.cmdline() and \
-                self.gameDir.split('\\')[-1] not in process.cmdline():
-            # wrong game
-            process.terminate()
-            return None
-        elif '-usercon' not in process.cmdline():
-            # doesn't have rcon enabled
-            return False
-        else:
-            # 'connections' confirms game is listening for rcon
-            return bool(process.connections())
 
     def __enter__(self):
         while self._check_rcon_eligible() is None:
@@ -161,3 +174,13 @@ class ValveExe(object):
                 os.remove(f)
             except:
                 pass
+
+# COMING SOON!
+
+#class Server:
+#    """Represents a server the that a ValveExe client is connected to."""
+#    def __init(self, exe, poll_info_on='client connection'):
+#        self.exe = exe
+#        self.poll_info_on = poll_info_on
+#        if self.poll_info_on == 'client connection':
+#            self.info_poller = RegexLogWatcher
